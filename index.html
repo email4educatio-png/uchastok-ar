@@ -5,60 +5,91 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Мастерская в AR</title>
 <style>
-  :root { --bg: #f3f5f1; --fg: #1f2a22; --muted: #5d6b60; --accent: #2f6f4e; --card: #ffffff; --line: #d3dbd2; }
+  :root { --bg: #f3f5f1; --fg: #1f2a22; --muted: #5d6b60; --accent: #2f6f4e; --alt: #3d5a80; --card: #ffffff; --line: #d3dbd2; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #141a16; --fg: #e6ece6; --muted: #9aa89d; --accent: #6cc196; --card: #1d2520; --line: #34403a; }
+    :root { --bg: #141a16; --fg: #e6ece6; --muted: #9aa89d; --accent: #3f8f66; --alt: #4f74a3; --card: #1d2520; --line: #34403a; }
   }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 560px; margin: 0 auto; padding: 24px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
   h1 { margin: 0; font-size: 24px; }
+  h2 { margin: 0; font-size: 17px; }
   p { margin: 0; }
   .muted { color: var(--muted); font-size: 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .btn { display: block; text-align: center; text-decoration: none; background: var(--accent); color: #fff; font-weight: 600; font-size: 18px; padding: 16px; border-radius: 10px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .btn { display: block; text-align: center; text-decoration: none; background: var(--accent); color: #fff; font-weight: 600; font-size: 16px; padding: 14px 8px; border-radius: 10px; }
+  .btn.alt { background: var(--alt); }
   ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 </style>
 </head>
 <body>
 <main>
   <h1>Мастерская и навес в AR</h1>
-  <p class="muted">Открывайте в Chrome на Android-телефоне. Модели в натуральную величину.</p>
+  <p class="muted">Открывайте в Chrome на Android. Модели в натуральную величину. Если один способ не сработал — пробуйте следующий.</p>
 
   <div class="card">
-    <a class="btn" id="btn-workshop" href="#">Мастерская в AR</a>
-    <p class="muted">Дом 7 × 2,6 м, веранда 5 × 2 м. Красный столбик — угол у белого забора, ближний к рабице: 5 м от рабицы, 1 м от забора.</p>
+    <h2>Способ 1. Сервисы Google Play для AR</h2>
+    <div class="row">
+      <a class="btn" id="arcore-workshop" href="#">Мастерская</a>
+      <a class="btn" id="arcore-canopy" href="#">Навес</a>
+    </div>
   </div>
 
   <div class="card">
-    <a class="btn" id="btn-canopy" href="#">Навес в AR</a>
-    <p class="muted">Навес 6 × 1 м со стеллажами. Красный столбик — задний угол со стороны дома: 0,5 м от рабицы, 1,9 м от дома.</p>
+    <h2>Способ 2. Через приложение Google</h2>
+    <p class="muted">Если AR недоступен, покажет модель в 3D на экране.</p>
+    <div class="row">
+      <a class="btn alt" id="google-workshop" href="#">Мастерская</a>
+      <a class="btn alt" id="google-canopy" href="#">Навес</a>
+    </div>
   </div>
 
   <div class="card">
-    <strong>Как ставить</strong>
+    <h2>Способ 3. Прямо в браузере</h2>
+    <p class="muted">Откроется страница с моделью. Внизу будет кнопка «Смотреть на участке».</p>
+    <div class="row">
+      <a class="btn alt" href="viewer.html?m=masterskaya">Мастерская</a>
+      <a class="btn alt" href="viewer.html?m=naves">Навес</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Где точка привязки</h2>
+    <p class="muted">Мастерская: красный столбик — угол у белого забора, ближний к рабице (5 м от рабицы, 1 м от забора). Дом 7 × 2,6 м, веранда 5 × 2 м.</p>
+    <p class="muted">Навес: красный столбик — задний угол со стороны дома (0,5 м от рабицы, 1,9 м от дома). Навес 6 × 1 м.</p>
+  </div>
+
+  <div class="card">
+    <h2>Как ставить</h2>
     <ol>
       <li>Вбейте колышек в точку привязки.</li>
-      <li>Нажмите кнопку и медленно поводите телефоном по земле, пока он её не найдёт.</li>
+      <li>Запустите AR и медленно поводите телефоном по земле, пока он её не найдёт.</li>
       <li>Пальцем перетащите модель так, чтобы красный столбик встал на колышек.</li>
-      <li>Двумя пальцами поверните: длинная стена мастерской — вдоль белого забора, навес — вдоль рабицы.</li>
-      <li>Отходите и смотрите. Размер модели менять нельзя, она всегда 1:1.</li>
+      <li>Двумя пальцами поверните: мастерская — длинной стеной вдоль белого забора, навес — вдоль рабицы.</li>
+      <li>Отходите и смотрите. Размер модели не меняется, она всегда 1:1.</li>
     </ol>
   </div>
 
-  <p class="muted" id="fallback-note" hidden>AR не запустился на этом телефоне. Проверьте, что установлены «Сервисы Google Play для AR» и обновлено приложение Google.</p>
+  <p class="muted" id="fallback-note" hidden>Этот способ на телефоне не запустился. Попробуйте другой.</p>
 </main>
 <script>
-  // Scene Viewer only loads models from a public URL, so the links are built from this page's own address.
+  // Scene Viewer only loads models from a public URL, so links are built from this page's own address.
   const base = new URL('.', location.href).href;
-  function sceneViewerLink(file) {
+  const PACKAGES = {
+    arcore: { pkg: 'com.google.ar.core', mode: 'ar_only' },
+    google: { pkg: 'com.google.android.googlequicksearchbox', mode: 'ar_preferred' },
+  };
+  function sceneViewerLink(file, { pkg, mode }) {
     const fileUrl = encodeURIComponent(base + file);
     const fallback = encodeURIComponent(base + '?ar=failed');
-    return 'intent://arvr.google.com/scene-viewer/1.0?file=' + fileUrl + '&mode=ar_only&resizable=false'
-      + '#Intent;scheme=https;package=com.google.ar.core;action=android.intent.action.VIEW;'
+    return 'intent://arvr.google.com/scene-viewer/1.0?file=' + fileUrl + '&mode=' + mode + '&resizable=false'
+      + '#Intent;scheme=https;package=' + pkg + ';action=android.intent.action.VIEW;'
       + 'S.browser_fallback_url=' + fallback + ';end;';
   }
-  document.getElementById('btn-workshop').href = sceneViewerLink('masterskaya.glb');
-  document.getElementById('btn-canopy').href = sceneViewerLink('naves.glb');
+  for (const [key, cfg] of Object.entries(PACKAGES)) {
+    document.getElementById(key + '-workshop').href = sceneViewerLink('masterskaya.glb', cfg);
+    document.getElementById(key + '-canopy').href = sceneViewerLink('naves.glb', cfg);
+  }
   if (new URLSearchParams(location.search).get('ar') === 'failed') document.getElementById('fallback-note').hidden = false;
 </script>
 </body>
