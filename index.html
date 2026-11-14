@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Мастерская в AR</title>
 <style>
-  :root { --bg: #f3f5f1; --fg: #1f2a22; --muted: #5d6b60; --accent: #2f6f4e; --alt: #3d5a80; --card: #ffffff; --line: #d3dbd2; }
+  :root { --bg: #f3f5f1; --fg: #1f2a22; --muted: #5d6b60; --accent: #2f6f4e; --alt: #3d5a80; --card: #ffffff; --line: #d3dbd2; --warn: #b4541a; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #141a16; --fg: #e6ece6; --muted: #9aa89d; --accent: #3f8f66; --alt: #4f74a3; --card: #1d2520; --line: #34403a; }
+    :root { --bg: #141a16; --fg: #e6ece6; --muted: #9aa89d; --accent: #3f8f66; --alt: #4f74a3; --card: #1d2520; --line: #34403a; --warn: #d9853f; }
   }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 560px; margin: 0 auto; padding: 24px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
@@ -19,6 +19,8 @@
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .btn { display: block; text-align: center; text-decoration: none; background: var(--accent); color: #fff; font-weight: 600; font-size: 16px; padding: 14px 8px; border-radius: 10px; }
   .btn.alt { background: var(--alt); }
+  .card.warn { border-color: var(--warn); border-width: 2px; }
+  [hidden] { display: none !important; }
   ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 </style>
 </head>
@@ -26,6 +28,20 @@
 <main>
   <h1>Мастерская и навес в AR</h1>
   <p class="muted">Открывайте в Chrome на Android. Модели в натуральную величину. Если один способ не сработал — пробуйте следующий.</p>
+
+  <div class="card warn" id="fail-card" hidden>
+    <h2 id="fail-title"></h2>
+    <p class="muted" id="fail-text"></p>
+    <a class="btn" id="fail-link" href="#"></a>
+  </div>
+
+  <div class="card warn" id="browser-card" hidden>
+    <h2>Страница открыта не в Chrome</h2>
+    <p class="muted">В других браузерах кнопки запуска AR часто не срабатывают.</p>
+    <a class="btn" id="chrome-link" href="#">Открыть в Chrome</a>
+  </div>
+
+  <p class="muted" id="device-check"></p>
 
   <div class="card">
     <h2>Способ 1. Сервисы Google Play для AR</h2>
@@ -70,27 +86,77 @@
     </ol>
   </div>
 
-  <p class="muted" id="fallback-note" hidden>Этот способ на телефоне не запустился. Попробуйте другой.</p>
 </main>
 <script>
   // Scene Viewer only loads models from a public URL, so links are built from this page's own address.
   const base = new URL('.', location.href).href;
+  const PLAY_STORE = 'https://play.google.com/store/apps/details?id=';
   const PACKAGES = {
-    arcore: { pkg: 'com.google.ar.core', mode: 'ar_only' },
-    google: { pkg: 'com.google.android.googlequicksearchbox', mode: 'ar_preferred' },
+    arcore: {
+      pkg: 'com.google.ar.core', mode: 'ar_only',
+      failTitle: 'Способ 1 не запустился',
+      failText: 'Android не нашёл «Сервисы Google Play для AR»: они не установлены, отключены или это устройство не поддерживает AR. Откройте их страницу в Google Play: там будет кнопка «Установить» или «Включить» либо надпись, что устройство не поддерживается.',
+      failLink: 'Сервисы Google Play для AR',
+    },
+    google: {
+      pkg: 'com.google.android.googlequicksearchbox', mode: 'ar_preferred',
+      failTitle: 'Способ 2 не запустился',
+      failText: 'Android не нашёл приложение Google: оно не установлено или отключено. Установите или обновите его в Google Play.',
+      failLink: 'Приложение Google',
+    },
   };
-  function sceneViewerLink(file, { pkg, mode }) {
+  function sceneViewerLink(file, key) {
+    const { pkg, mode } = PACKAGES[key];
     const fileUrl = encodeURIComponent(base + file);
-    const fallback = encodeURIComponent(base + '?ar=failed');
+    const fallback = encodeURIComponent(base + '?ar=failed&via=' + key);
     return 'intent://arvr.google.com/scene-viewer/1.0?file=' + fileUrl + '&mode=' + mode + '&resizable=false'
       + '#Intent;scheme=https;package=' + pkg + ';action=android.intent.action.VIEW;'
       + 'S.browser_fallback_url=' + fallback + ';end;';
   }
-  for (const [key, cfg] of Object.entries(PACKAGES)) {
-    document.getElementById(key + '-workshop').href = sceneViewerLink('masterskaya.glb', cfg);
-    document.getElementById(key + '-canopy').href = sceneViewerLink('naves.glb', cfg);
+  for (const key of Object.keys(PACKAGES)) {
+    document.getElementById(key + '-workshop').href = sceneViewerLink('masterskaya.glb', key);
+    document.getElementById(key + '-canopy').href = sceneViewerLink('naves.glb', key);
   }
-  if (new URLSearchParams(location.search).get('ar') === 'failed') document.getElementById('fallback-note').hidden = false;
+
+  // Chrome sends the user back here with ?ar=failed when Android has no app able to take the intent.
+  function showFailure() {
+    const params = new URLSearchParams(location.search);
+    const failed = PACKAGES[params.get('via')];
+    if (params.get('ar') !== 'failed' || !failed) return;
+    document.getElementById('fail-title').textContent = failed.failTitle;
+    document.getElementById('fail-text').textContent = failed.failText;
+    const link = document.getElementById('fail-link');
+    link.textContent = failed.failLink;
+    link.href = PLAY_STORE + failed.pkg;
+    document.getElementById('fail-card').hidden = false;
+  }
+
+  // Browsers built on Chrome keep "Chrome" in the user agent and add their own marker.
+  const OTHER_BROWSER = /YaBrowser|SamsungBrowser|MiuiBrowser|HuaweiBrowser|OPR\/|EdgA\/|Firefox|DuckDuckGo|UCBrowser/;
+  function showBrowserWarning() {
+    const ua = navigator.userAgent;
+    if (!/Android/.test(ua) || !OTHER_BROWSER.test(ua)) return;
+    document.getElementById('chrome-link').href = 'intent://' + location.host + location.pathname
+      + '#Intent;scheme=https;package=com.android.chrome;end;';
+    document.getElementById('browser-card').hidden = false;
+  }
+
+  async function showDeviceCheck() {
+    const note = document.getElementById('device-check');
+    if (!/Android/.test(navigator.userAgent)) { note.textContent = 'Проверка: это не Android, AR здесь не запустится.'; return; }
+    if (!navigator.xr) { note.textContent = 'Проверка: этот браузер не умеет AR.'; return; }
+    try {
+      const supported = await navigator.xr.isSessionSupported('immersive-ar');
+      note.textContent = supported ? 'Проверка: браузер видит поддержку AR на этом устройстве.'
+                                   : 'Проверка: браузер не видит поддержки AR на этом устройстве.';
+    } catch (error) {
+      note.textContent = 'Проверка AR не удалась: ' + error.message;
+    }
+  }
+
+  showFailure();
+  showBrowserWarning();
+  showDeviceCheck();
 </script>
 </body>
 </html>
