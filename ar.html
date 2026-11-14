@@ -241,7 +241,8 @@
     if (!point) { hintName = 'sky'; return; }
     holder.position.copy(point);
     holder.visible = true;
-    anchorNeedsUpdate = true;
+    // In open space ARCore has nothing to hold an anchor to and it can wander off, so anchor only to a real surface.
+    if (surfacePoint) anchorNeedsUpdate = true; else releaseAnchor();
     hintName = 'adjust';
   }
 
@@ -340,7 +341,7 @@
     groundY += delta;
     if (!holder.visible) return;
     holder.position.y = groundY;
-    anchorNeedsUpdate = true;
+    releaseAnchor();
   }
 
   // A short touch on the empty area places the model, a sideways drag turns it. Buttons handle themselves.
