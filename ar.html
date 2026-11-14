@@ -24,6 +24,8 @@
   /* In AR the overlay is drawn over the camera picture, so it must stay transparent. */
   #overlay { position: fixed; inset: 0; background: transparent; color: #fff; display: flex; flex-direction: column; justify-content: space-between; touch-action: none; user-select: none; }
   #hint { margin: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(0, 0, 0, .6); font-size: 15px; }
+  #debug { margin: 0 12px; padding: 6px 10px; border-radius: 8px; background: rgba(0, 0, 0, .5); font-size: 12px; align-self: flex-start; }
+  #top { display: flex; flex-direction: column; gap: 6px; }
   #controls { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
   .row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
   #overlay button.secondary { background: rgba(0, 0, 0, .6); }
@@ -53,7 +55,10 @@
 </main>
 
 <div id="overlay" hidden>
-  <div id="hint"></div>
+  <div id="top">
+    <div id="hint"></div>
+    <div id="debug"></div>
+  </div>
   <div id="controls">
     <div class="row" id="adjust-row">
       <button class="secondary" id="turn-left">↺ 1°</button>
@@ -76,7 +81,9 @@
   const MODELS = { masterskaya: 'Мастерская', naves: 'Навес' };
   const FINE_TURN_RAD = THREE.MathUtils.degToRad(1);
   const DRAG_RAD_PER_PX = THREE.MathUtils.degToRad(0.3);
-  const TAP_SLOP_PX = 12;
+  const TAP_SLOP_PX = 16;
+  // A surface hit recorded while the finger was down is used only if the tap ended this recently.
+  const TOUCH_HIT_MAX_AGE_MS = 500;
   const HEIGHT_STEP_M = 0.05;
   const FAR_PLANE_M = 300;
   // Until the phone recognises the ground, it is assumed to be this far below where the session started.
@@ -92,8 +99,9 @@
     sky: 'Так не достать. Нажмите на землю ближе к себе, ниже горизонта.',
     adjust: 'Нажатие — переставить, пальцем влево-вправо — повернуть. Висит или утонула — «Выше» и «Ниже». Потом «Закрепить».',
     locked: 'Закреплено. Отходите и смотрите.',
+    regrounded: 'Телефон распознал землю. Нажмите на нужное место ещё раз, чтобы модель встала точно.',
   };
-  const GROUND_UNKNOWN_NOTE = ' Землю телефон пока не распознал, высота примерная.';
+  const GROUND_UNKNOWN_NOTE = ' Землю телефон пока не распознал: высота примерная, при ходьбе модель будет плыть.';
 
   const el = (id) => document.getElementById(id);
   const key = new URLSearchParams(location.search).get('m');
@@ -120,6 +128,10 @@
 
   let session = null;
   let hitTestSource = null;
+  let touchHitSource = null;
+  let lastTouchHit = null;
+  let frameError = '';
+  let shownDebugText = '';
   let groundY = -ASSUMED_PHONE_HEIGHT_M;
   let isGroundDetected = false;
   let isHeightManual = false;
@@ -164,27 +176,48 @@
     }).catch((error) => console.warn('Anchor was not created:', error));
   }
 
+  function eyePosition() {
+    const eye = renderer.xr.getCamera().cameras[0];
+    return eye ? new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld) : null;
+  }
+
+  // Returns where a detected surface was hit, or null unless it is level ground clearly below the phone.
+  function groundHitPoint(hit, space) {
+    const pose = hit && hit.getPose(space);
+    const eye = eyePosition();
+    if (!pose || !eye) return null;
+    const normalY = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.transform.orientation).y;
+    const depth = eye.y - pose.transform.position.y;
+    if (normalY < MIN_GROUND_NORMAL_Y || depth < MIN_GROUND_DEPTH_M) return null;
+    return new THREE.Vector3().copy(pose.transform.position);
+  }
+
+  // Ground seen along the centre of the screen refines the assumed height until the user sets it by hand.
   function detectGround(frame, space) {
     if (!hitTestSource || isHeightManual || isLocked) return;
-    const hit = frame.getHitTestResults(hitTestSource)[0];
-    const pose = hit && hit.getPose(space);
-    if (!pose) return;
-    const eye = renderer.xr.getCamera().cameras[0];
-    if (!eye) return;
-    const normalY = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.transform.orientation).y;
-    const depth = new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld).y - pose.transform.position.y;
-    if (normalY < MIN_GROUND_NORMAL_Y || depth < MIN_GROUND_DEPTH_M) return;
+    const point = groundHitPoint(frame.getHitTestResults(hitTestSource)[0], space);
+    if (!point) return;
+    const isNewLevel = Math.abs(groundY - point.y) >= HEIGHT_STEP_M;
+    // A model placed on the guessed level stands in the wrong spot; moving it silently would confuse, so ask.
+    if (isNewLevel && !isGroundDetected && holder.visible) hintName = 'regrounded';
+    if (isNewLevel) groundY = point.y;
     isGroundDetected = true;
-    if (Math.abs(groundY - pose.transform.position.y) < HEIGHT_STEP_M) return;
-    groundY = pose.transform.position.y;
-    if (holder.visible) { holder.position.y = groundY; anchorNeedsUpdate = true; }
+  }
+
+  // While a finger is down, remember the real surface under it so the tap can land exactly there.
+  function trackTouchHits(frame, space) {
+    if (!touchHitSource) return;
+    for (const { results } of frame.getHitTestResultsForTransientInput(touchHitSource)) {
+      const point = groundHitPoint(results[0], space);
+      if (point) lastTouchHit = { point, time: performance.now() };
+    }
   }
 
   // Returns the point where the ray through a screen tap meets the ground level, or null if it does not.
   function groundPointUnderTap(tap) {
     const eye = renderer.xr.getCamera().cameras[0];
     if (!eye) return null;
-    const origin = new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld);
+    const origin = eyePosition();
     const ndc = new THREE.Vector3(tap.x / window.innerWidth * 2 - 1, 1 - tap.y / window.innerHeight * 2, 0.5);
     const direction = ndc.applyMatrix4(new THREE.Matrix4().copy(eye.projectionMatrix).invert())
       .applyMatrix4(eye.matrixWorld).sub(origin).normalize();
@@ -195,7 +228,15 @@
   }
 
   function placeAtTap() {
-    const point = groundPointUnderTap(pendingTap);
+    const isTouchHitFresh = lastTouchHit && performance.now() - lastTouchHit.time < TOUCH_HIT_MAX_AGE_MS;
+    const surfacePoint = isTouchHitFresh ? lastTouchHit.point : null;
+    lastTouchHit = null;
+    if (surfacePoint) {
+      groundY = surfacePoint.y;
+      isGroundDetected = true;
+      isHeightManual = false;
+    }
+    const point = surfacePoint || groundPointUnderTap(pendingTap);
     pendingTap = null;
     if (!point) { hintName = 'sky'; return; }
     holder.position.copy(point);
@@ -204,11 +245,19 @@
     hintName = 'adjust';
   }
 
-  function onFrame(time, frame) {
-    if (!frame) return;
-    const space = renderer.xr.getReferenceSpace();
-    renderer.render(scene, camera);
+  function refreshDebug() {
+    const eye = eyePosition();
+    const distance = holder.visible && eye ? eye.distanceTo(holder.position).toFixed(1) + ' м' : 'не стоит';
+    const text = frameError ? 'Ошибка: ' + frameError
+      : 'Земля: ' + (isGroundDetected ? 'распознана' : 'не распознана')
+        + ' · якорь: ' + (anchor ? 'есть' : 'нет') + ' · до модели: ' + distance;
+    if (text === shownDebugText) return;
+    shownDebugText = text;
+    el('debug').textContent = text;
+  }
 
+  function updatePlacement(frame, space) {
+    trackTouchHits(frame, space);
     detectGround(frame, space);
     if (pendingTap) placeAtTap();
     if (anchorNeedsUpdate) {
@@ -217,7 +266,21 @@
       const pose = anchor && frame.getPose(anchor.anchorSpace, space);
       if (pose) holder.position.copy(pose.transform.position);
     }
+  }
+
+  function onFrame(time, frame) {
+    if (!frame) return;
+    renderer.render(scene, camera);
+    try {
+      updatePlacement(frame, renderer.xr.getReferenceSpace());
+    } catch (error) {
+      // Shown on screen because the phone has no visible console to read it from.
+      frameError = error.message;
+      pendingTap = null;
+      console.error(error);
+    }
     refreshHint();
+    refreshDebug();
   }
 
   function onSessionEnd() {
@@ -225,6 +288,9 @@
     releaseAnchor();
     session = null;
     hitTestSource = null;
+    touchHitSource = null;
+    lastTouchHit = null;
+    frameError = '';
     pendingTap = null;
     holder.visible = false;
     groundY = -ASSUMED_PHONE_HEIGHT_M;
@@ -241,6 +307,7 @@
     try {
       const viewerSpace = await session.requestReferenceSpace('viewer');
       hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+      touchHitSource = await session.requestHitTestSourceForTransientInput({ profile: 'generic-touchscreen' });
     } catch (error) {
       console.warn('Ground detection is unavailable:', error);
     }
