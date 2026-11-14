@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Постройка на участке</title>
+<style>
+  :root { --bg: #f3f5f1; --fg: #1f2a22; --muted: #5d6b60; --accent: #2f6f4e; --card: #ffffff; --line: #d3dbd2; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141a16; --fg: #e6ece6; --muted: #9aa89d; --accent: #3f8f66; --card: #1d2520; --line: #34403a; } }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 40px; display: flex; flex-direction: column; gap: 16px; }
+  h1 { margin: 0; font-size: 24px; }
+  p { margin: 0; }
+  ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  button { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: 600 17px system-ui, sans-serif; padding: 14px 10px; }
+  button:disabled { opacity: .5; }
+  #start { font-size: 19px; padding: 18px; }
+  /* The canvas stays in the layout (hidden canvases may not get frames) but is transparent outside AR. */
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+
+  /* In AR the overlay is drawn over the camera picture, so it must stay transparent. */
+  #overlay { position: fixed; inset: 0; background: transparent; color: #fff; display: flex; flex-direction: column; justify-content: space-between; touch-action: none; }
+  #hint { margin: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(0, 0, 0, .6); font-size: 15px; }
+  #controls { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+  .row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+  #overlay button.secondary { background: rgba(0, 0, 0, .6); }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<main id="intro">
+  <h1 id="title">Постройка на участке</h1>
+  <p class="muted" id="status">Загружаю модель…</p>
+  <button id="start" disabled>Запустить камеру</button>
+  <div class="card">
+    <ol>
+      <li>Встаньте в 3–5 метрах от колышка и нажмите «Запустить камеру».</li>
+      <li>Медленно поводите телефоном, глядя на землю, пока не появится модель.</li>
+      <li>Наведите центр экрана на колышек: красный столбик модели должен встать на него. Нажмите «Закрепить».</li>
+      <li>Поверните модель: ведите пальцем по экрану влево-вправо, точно — кнопками.</li>
+      <li>Отходите и смотрите. Размер всегда 1:1.</li>
+    </ol>
+  </div>
+  <p><a href="./">← Назад</a></p>
+</main>
+
+<div id="overlay" hidden>
+  <div id="hint"></div>
+  <div id="controls">
+    <div class="row">
+      <button class="secondary" id="turn-left">↺ 1°</button>
+      <button class="secondary" id="turn-right">1° ↻</button>
+    </div>
+    <div class="row">
+      <button id="place">Закрепить</button>
+      <button id="replace" hidden>Переставить</button>
+      <button class="secondary" id="exit">Выйти</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import * as THREE from 'three';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+  // Only the two published models are allowed, so the page cannot be pointed at arbitrary files.
+  const MODELS = { masterskaya: 'Мастерская', naves: 'Навес' };
+  const FINE_TURN_RAD = THREE.MathUtils.degToRad(1);
+  const DRAG_RAD_PER_PX = THREE.MathUtils.degToRad(0.3);
+  const FAR_PLANE_M = 300;
+  const HINTS = {
+    searching: 'Ищу землю. Медленно поводите телефоном, глядя на землю в 2–3 метрах перед собой.',
+    placing: 'Наведите центр экрана на колышек и нажмите «Закрепить». Пальцем по экрану — поворот.',
+    placed: 'Закреплено. Можно отходить и смотреть. Пальцем по экрану — поворот.',
+  };
+
+  const el = (id) => document.getElementById(id);
+  const key = new URLSearchParams(location.search).get('m');
+  const modelName = key in MODELS ? key : 'masterskaya';
+  el('title').textContent = MODELS[modelName] + ' на участке';
+  document.title = el('title').textContent;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.05, FAR_PLANE_M);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f80, 2.5));
+  const sun = new THREE.DirectionalLight(0xffffff, 2);
+  sun.position.set(3, 8, 4);
+  scene.add(sun);
+
+  // The model origin is the red anchor post, so the holder position is the peg position on the ground.
+  const holder = new THREE.Group();
+  holder.visible = false;
+  scene.add(holder);
+
+  let session = null;
+  let hitTestSource = null;
+  let anchor = null;
+  let isPlaced = false;
+  let placeRequested = false;
+  let shownHint = null;
+
+  function showHint(name) {
+    if (shownHint === name) return;
+    shownHint = name;
+    el('hint').textContent = HINTS[name];
+  }
+
+  function setPlaced(placed) {
+    isPlaced = placed;
+    el('place').hidden = placed;
+    el('replace').hidden = !placed;
+  }
+
+  function releaseAnchor() {
+    if (anchor) anchor.delete();
+    anchor = null;
+  }
+
+  function place(hit) {
+    placeRequested = false;
+    setPlaced(true);
+    if (!hit.createAnchor) return;
+    // Without an anchor the model still stays put, it just drifts more when ARCore refines its map.
+    hit.createAnchor().then((created) => {
+      if (isPlaced) anchor = created; else created.delete();
+    }).catch((error) => console.warn('Anchor was not created:', error));
+  }
+
+  function onFrame(time, frame) {
+    if (!frame || !hitTestSource) return;
+    const space = renderer.xr.getReferenceSpace();
+
+    if (isPlaced) {
+      const pose = anchor && frame.getPose(anchor.anchorSpace, space);
+      if (pose) holder.position.copy(pose.transform.position);
+      showHint('placed');
+    } else {
+      const hit = frame.getHitTestResults(hitTestSource)[0];
+      const pose = hit && hit.getPose(space);
+      if (pose) {
+        holder.position.copy(pose.transform.position);
+        holder.visible = true;
+        if (placeRequested) place(hit);
+      }
+      placeRequested = false;
+      showHint(holder.visible ? 'placing' : 'searching');
+    }
+    renderer.render(scene, camera);
+  }
+
+  function onSessionEnd() {
+    renderer.setAnimationLoop(null);
+    releaseAnchor();
+    session = null;
+    hitTestSource = null;
+    holder.visible = false;
+    setPlaced(false);
+    el('overlay').hidden = true;
+    el('intro').hidden = false;
+  }
+
+  async function startSession() {
+    el('overlay').hidden = false;
+    el('intro').hidden = true;
+    try {
+      session = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['hit-test', 'dom-overlay'],
+        optionalFeatures: ['anchors'],
+        domOverlay: { root: el('overlay') },
+      });
+      session.addEventListener('end', onSessionEnd);
+      renderer.xr.setReferenceSpaceType('local');
+      await renderer.xr.setSession(session);
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+      renderer.setAnimationLoop(onFrame);
+    } catch (error) {
+      if (session) await session.end(); else onSessionEnd();
+      el('status').textContent = 'AR не запустился: ' + error.message;
+    }
+  }
+
+  function turn(angle) { holder.rotation.y += angle; }
+
+  // Buttons sit inside the overlay, so a drag is counted only when it starts on the empty area.
+  let dragX = null;
+  el('overlay').addEventListener('pointerdown', (e) => { dragX = e.target.closest('button') ? null : e.clientX; });
+  el('overlay').addEventListener('pointermove', (e) => {
+    if (dragX === null) return;
+    turn((e.clientX - dragX) * DRAG_RAD_PER_PX);
+    dragX = e.clientX;
+  });
+  for (const type of ['pointerup', 'pointercancel']) el('overlay').addEventListener(type, () => { dragX = null; });
+
+  el('turn-left').addEventListener('click', () => turn(FINE_TURN_RAD));
+  el('turn-right').addEventListener('click', () => turn(-FINE_TURN_RAD));
+  el('place').addEventListener('click', () => { placeRequested = true; });
+  el('replace').addEventListener('click', () => { releaseAnchor(); setPlaced(false); });
+  el('exit').addEventListener('click', () => session && session.end());
+  el('start').addEventListener('click', startSession);
+
+  async function isArSupported() {
+    if (!navigator.xr) return false;
+    try { return await navigator.xr.isSessionSupported('immersive-ar'); } catch { return false; }
+  }
+
+  async function init() {
+    const [gltf, supported] = await Promise.all([
+      new GLTFLoader().loadAsync(modelName + '.glb'),
+      isArSupported(),
+    ]);
+    holder.add(gltf.scene);
+    if (!supported) {
+      el('status').textContent = 'Этот браузер не видит поддержки AR на устройстве. Нужен Chrome на телефоне из списка Google.';
+      return;
+    }
+    el('status').textContent = 'Модель загружена. Лучше запускать на улице, на участке.';
+    el('start').disabled = false;
+  }
+
+  init().catch((error) => { el('status').textContent = 'Не удалось загрузить модель: ' + error.message; });
+</script>
+</body>
+</html>

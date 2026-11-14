@@ -44,15 +44,24 @@
   <p class="muted" id="device-check"></p>
 
   <div class="card">
-    <h2>Способ 1. Сервисы Google Play для AR</h2>
+    <h2>Способ 1. Камера в Chrome</h2>
+    <p class="muted">Основной способ. Модель ставится на землю по центру экрана, размер 1:1, поворот пальцем.</p>
     <div class="row">
-      <a class="btn" id="arcore-workshop" href="#">Мастерская</a>
-      <a class="btn" id="arcore-canopy" href="#">Навес</a>
+      <a class="btn" href="ar.html?m=masterskaya">Мастерская</a>
+      <a class="btn" href="ar.html?m=naves">Навес</a>
     </div>
   </div>
 
   <div class="card">
-    <h2>Способ 2. Через приложение Google</h2>
+    <h2>Способ 2. Сервисы Google Play для AR</h2>
+    <div class="row">
+      <a class="btn alt" id="arcore-workshop" href="#">Мастерская</a>
+      <a class="btn alt" id="arcore-canopy" href="#">Навес</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Способ 3. Через приложение Google</h2>
     <p class="muted">Если AR недоступен, покажет модель в 3D на экране.</p>
     <div class="row">
       <a class="btn alt" id="google-workshop" href="#">Мастерская</a>
@@ -61,8 +70,8 @@
   </div>
 
   <div class="card">
-    <h2>Способ 3. Прямо в браузере</h2>
-    <p class="muted">Откроется страница с моделью. Внизу будет кнопка «Смотреть на участке».</p>
+    <h2>Покрутить модель в 3D</h2>
+    <p class="muted">Без камеры, просто модель на экране.</p>
     <div class="row">
       <a class="btn alt" href="viewer.html?m=masterskaya">Мастерская</a>
       <a class="btn alt" href="viewer.html?m=naves">Навес</a>
@@ -79,9 +88,9 @@
     <h2>Как ставить</h2>
     <ol>
       <li>Вбейте колышек в точку привязки.</li>
-      <li>Запустите AR и медленно поводите телефоном по земле, пока он её не найдёт.</li>
-      <li>Пальцем перетащите модель так, чтобы красный столбик встал на колышек.</li>
-      <li>Двумя пальцами поверните: мастерская — длинной стеной вдоль белого забора, навес — вдоль рабицы.</li>
+      <li>Запустите способ 1 и медленно поводите телефоном, глядя на землю, пока не появится модель.</li>
+      <li>Наведите центр экрана на колышек, чтобы красный столбик встал на него, и нажмите «Закрепить».</li>
+      <li>Ведите пальцем по экрану, чтобы повернуть: мастерская — длинной стеной вдоль белого забора, навес — вдоль рабицы.</li>
       <li>Отходите и смотрите. Размер модели не меняется, она всегда 1:1.</li>
     </ol>
   </div>
@@ -94,13 +103,13 @@
   const PACKAGES = {
     arcore: {
       pkg: 'com.google.ar.core', mode: 'ar_only',
-      failTitle: 'Способ 1 не запустился',
+      failTitle: 'Способ 2 не запустился',
       failText: 'Android не нашёл «Сервисы Google Play для AR»: они не установлены, отключены или это устройство не поддерживает AR. Откройте их страницу в Google Play: там будет кнопка «Установить» или «Включить» либо надпись, что устройство не поддерживается.',
       failLink: 'Сервисы Google Play для AR',
     },
     google: {
       pkg: 'com.google.android.googlequicksearchbox', mode: 'ar_preferred',
-      failTitle: 'Способ 2 не запустился',
+      failTitle: 'Способ 3 не запустился',
       failText: 'Android не нашёл приложение Google: оно не установлено или отключено. Установите или обновите его в Google Play.',
       failLink: 'Приложение Google',
     },
