@@ -15,14 +15,14 @@
   ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
   .muted { color: var(--muted); font-size: 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-  button { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: 600 17px system-ui, sans-serif; padding: 14px 10px; }
+  button { border: 0; border-radius: 10px; background: var(--accent); color: #fff; font: 600 17px system-ui, sans-serif; padding: 14px 6px; }
   button:disabled { opacity: .5; }
   #start { font-size: 19px; padding: 18px; }
   /* The canvas stays in the layout (hidden canvases may not get frames) but is transparent outside AR. */
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
 
   /* In AR the overlay is drawn over the camera picture, so it must stay transparent. */
-  #overlay { position: fixed; inset: 0; background: transparent; color: #fff; display: flex; flex-direction: column; justify-content: space-between; touch-action: none; }
+  #overlay { position: fixed; inset: 0; background: transparent; color: #fff; display: flex; flex-direction: column; justify-content: space-between; touch-action: none; user-select: none; }
   #hint { margin: 12px; padding: 10px 14px; border-radius: 10px; background: rgba(0, 0, 0, .6); font-size: 15px; }
   #controls { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
   .row { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
@@ -42,11 +42,11 @@
   <button id="start" disabled>Запустить камеру</button>
   <div class="card">
     <ol>
-      <li>Встаньте в 3–5 метрах от колышка и нажмите «Запустить камеру».</li>
-      <li>Медленно поводите телефоном, глядя на землю, пока не появится модель.</li>
-      <li>Наведите центр экрана на колышек: красный столбик модели должен встать на него. Нажмите «Закрепить».</li>
-      <li>Поверните модель: ведите пальцем по экрану влево-вправо, точно — кнопками.</li>
-      <li>Отходите и смотрите. Размер всегда 1:1.</li>
+      <li>Держите телефон вертикально на уровне груди и нажмите «Запустить камеру».</li>
+      <li>Нажмите пальцем на то место на земле, где должен стоять красный столбик модели. Модель встанет туда.</li>
+      <li>Не туда — нажмите ещё раз. Ведите пальцем влево-вправо, чтобы повернуть модель.</li>
+      <li>Если модель висит над землёй или утонула — кнопки «Выше» и «Ниже».</li>
+      <li>Нажмите «Закрепить», отходите и смотрите. Размер всегда 1:1.</li>
     </ol>
   </div>
   <p><a href="./">← Назад</a></p>
@@ -55,13 +55,14 @@
 <div id="overlay" hidden>
   <div id="hint"></div>
   <div id="controls">
-    <div class="row">
+    <div class="row" id="adjust-row">
       <button class="secondary" id="turn-left">↺ 1°</button>
       <button class="secondary" id="turn-right">1° ↻</button>
+      <button class="secondary" id="lower">Ниже</button>
+      <button class="secondary" id="higher">Выше</button>
     </div>
     <div class="row">
-      <button id="place">Закрепить</button>
-      <button id="replace" hidden>Переставить</button>
+      <button id="lock">Закрепить</button>
       <button class="secondary" id="exit">Выйти</button>
     </div>
   </div>
@@ -75,12 +76,24 @@
   const MODELS = { masterskaya: 'Мастерская', naves: 'Навес' };
   const FINE_TURN_RAD = THREE.MathUtils.degToRad(1);
   const DRAG_RAD_PER_PX = THREE.MathUtils.degToRad(0.3);
+  const TAP_SLOP_PX = 12;
+  const HEIGHT_STEP_M = 0.05;
   const FAR_PLANE_M = 300;
+  // Until the phone recognises the ground, it is assumed to be this far below where the session started.
+  const ASSUMED_PHONE_HEIGHT_M = 1.4;
+  const MAX_PLACE_DISTANCE_M = 60;
+  // A tap ray must point at least this much downwards, otherwise it never meets the ground nearby.
+  const MIN_DOWNWARD_SLOPE = 0.03;
+  // A detected surface counts as ground only if it is level and clearly below the phone.
+  const MIN_GROUND_NORMAL_Y = 0.9;
+  const MIN_GROUND_DEPTH_M = 0.5;
   const HINTS = {
-    searching: 'Ищу землю. Медленно поводите телефоном, глядя на землю в 2–3 метрах перед собой.',
-    placing: 'Наведите центр экрана на колышек и нажмите «Закрепить». Пальцем по экрану — поворот.',
-    placed: 'Закреплено. Можно отходить и смотреть. Пальцем по экрану — поворот.',
+    tap: 'Нажмите пальцем на землю там, где должен стоять красный столбик.',
+    sky: 'Так не достать. Нажмите на землю ближе к себе, ниже горизонта.',
+    adjust: 'Нажатие — переставить, пальцем влево-вправо — повернуть. Висит или утонула — «Выше» и «Ниже». Потом «Закрепить».',
+    locked: 'Закреплено. Отходите и смотрите.',
   };
+  const GROUND_UNKNOWN_NOTE = ' Землю телефон пока не распознал, высота примерная.';
 
   const el = (id) => document.getElementById(id);
   const key = new URLSearchParams(location.search).get('m');
@@ -100,65 +113,111 @@
   sun.position.set(3, 8, 4);
   scene.add(sun);
 
-  // The model origin is the red anchor post, so the holder position is the peg position on the ground.
+  // The model origin is the red anchor post, so the holder position is where that post stands.
   const holder = new THREE.Group();
   holder.visible = false;
   scene.add(holder);
 
   let session = null;
   let hitTestSource = null;
+  let groundY = -ASSUMED_PHONE_HEIGHT_M;
+  let isGroundDetected = false;
+  let isHeightManual = false;
+  let isLocked = false;
+  let pendingTap = null;
+  let hintName = 'tap';
+  let shownHintText = '';
   let anchor = null;
-  let isPlaced = false;
-  let placeRequested = false;
-  let shownHint = null;
+  let anchorNeedsUpdate = false;
+  let anchorRequestId = 0;
 
-  function showHint(name) {
-    if (shownHint === name) return;
-    shownHint = name;
-    el('hint').textContent = HINTS[name];
+  function refreshHint() {
+    const note = !isLocked && !isGroundDetected && !isHeightManual ? GROUND_UNKNOWN_NOTE : '';
+    const text = HINTS[hintName] + note;
+    if (text === shownHintText) return;
+    shownHintText = text;
+    el('hint').textContent = text;
   }
 
-  function setPlaced(placed) {
-    isPlaced = placed;
-    el('place').hidden = placed;
-    el('replace').hidden = !placed;
+  function setLocked(locked) {
+    isLocked = locked;
+    el('lock').textContent = locked ? 'Открепить' : 'Закрепить';
+    el('adjust-row').hidden = locked;
+    hintName = locked ? 'locked' : 'adjust';
   }
 
   function releaseAnchor() {
+    anchorRequestId += 1;
     if (anchor) anchor.delete();
     anchor = null;
   }
 
-  function place(hit) {
-    placeRequested = false;
-    setPlaced(true);
-    if (!hit.createAnchor) return;
-    // Without an anchor the model still stays put, it just drifts more when ARCore refines its map.
-    hit.createAnchor().then((created) => {
-      if (isPlaced) anchor = created; else created.delete();
+  // An anchor lets ARCore keep the spot fixed while it refines its map; without it the model drifts more.
+  function updateAnchor(frame, space) {
+    anchorNeedsUpdate = false;
+    releaseAnchor();
+    if (!frame.createAnchor) return;
+    const requestId = anchorRequestId;
+    const { x, y, z } = holder.position;
+    frame.createAnchor(new XRRigidTransform({ x, y, z }), space).then((created) => {
+      if (requestId === anchorRequestId) anchor = created; else created.delete();
     }).catch((error) => console.warn('Anchor was not created:', error));
   }
 
-  function onFrame(time, frame) {
-    if (!frame || !hitTestSource) return;
-    const space = renderer.xr.getReferenceSpace();
+  function detectGround(frame, space) {
+    if (!hitTestSource || isHeightManual || isLocked) return;
+    const hit = frame.getHitTestResults(hitTestSource)[0];
+    const pose = hit && hit.getPose(space);
+    if (!pose) return;
+    const eye = renderer.xr.getCamera().cameras[0];
+    if (!eye) return;
+    const normalY = new THREE.Vector3(0, 1, 0).applyQuaternion(pose.transform.orientation).y;
+    const depth = new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld).y - pose.transform.position.y;
+    if (normalY < MIN_GROUND_NORMAL_Y || depth < MIN_GROUND_DEPTH_M) return;
+    isGroundDetected = true;
+    if (Math.abs(groundY - pose.transform.position.y) < HEIGHT_STEP_M) return;
+    groundY = pose.transform.position.y;
+    if (holder.visible) { holder.position.y = groundY; anchorNeedsUpdate = true; }
+  }
 
-    if (isPlaced) {
+  // Returns the point where the ray through a screen tap meets the ground level, or null if it does not.
+  function groundPointUnderTap(tap) {
+    const eye = renderer.xr.getCamera().cameras[0];
+    if (!eye) return null;
+    const origin = new THREE.Vector3().setFromMatrixPosition(eye.matrixWorld);
+    const ndc = new THREE.Vector3(tap.x / window.innerWidth * 2 - 1, 1 - tap.y / window.innerHeight * 2, 0.5);
+    const direction = ndc.applyMatrix4(new THREE.Matrix4().copy(eye.projectionMatrix).invert())
+      .applyMatrix4(eye.matrixWorld).sub(origin).normalize();
+    if (direction.y > -MIN_DOWNWARD_SLOPE) return null;
+    const distance = (groundY - origin.y) / direction.y;
+    if (distance > MAX_PLACE_DISTANCE_M) return null;
+    return origin.addScaledVector(direction, distance);
+  }
+
+  function placeAtTap() {
+    const point = groundPointUnderTap(pendingTap);
+    pendingTap = null;
+    if (!point) { hintName = 'sky'; return; }
+    holder.position.copy(point);
+    holder.visible = true;
+    anchorNeedsUpdate = true;
+    hintName = 'adjust';
+  }
+
+  function onFrame(time, frame) {
+    if (!frame) return;
+    const space = renderer.xr.getReferenceSpace();
+    renderer.render(scene, camera);
+
+    detectGround(frame, space);
+    if (pendingTap) placeAtTap();
+    if (anchorNeedsUpdate) {
+      updateAnchor(frame, space);
+    } else {
       const pose = anchor && frame.getPose(anchor.anchorSpace, space);
       if (pose) holder.position.copy(pose.transform.position);
-      showHint('placed');
-    } else {
-      const hit = frame.getHitTestResults(hitTestSource)[0];
-      const pose = hit && hit.getPose(space);
-      if (pose) {
-        holder.position.copy(pose.transform.position);
-        holder.visible = true;
-        if (placeRequested) place(hit);
-      }
-      placeRequested = false;
-      showHint(holder.visible ? 'placing' : 'searching');
     }
-    renderer.render(scene, camera);
+    refreshHint();
   }
 
   function onSessionEnd() {
@@ -166,10 +225,25 @@
     releaseAnchor();
     session = null;
     hitTestSource = null;
+    pendingTap = null;
     holder.visible = false;
-    setPlaced(false);
+    groundY = -ASSUMED_PHONE_HEIGHT_M;
+    isGroundDetected = false;
+    isHeightManual = false;
+    setLocked(false);
+    hintName = 'tap';
     el('overlay').hidden = true;
     el('intro').hidden = false;
+  }
+
+  // Ground detection only refines the height, so the viewer must keep working when it is unavailable.
+  async function requestGroundDetection() {
+    try {
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    } catch (error) {
+      console.warn('Ground detection is unavailable:', error);
+    }
   }
 
   async function startSession() {
@@ -177,15 +251,14 @@
     el('intro').hidden = true;
     try {
       session = await navigator.xr.requestSession('immersive-ar', {
-        requiredFeatures: ['hit-test', 'dom-overlay'],
-        optionalFeatures: ['anchors'],
+        requiredFeatures: ['dom-overlay'],
+        optionalFeatures: ['hit-test', 'anchors'],
         domOverlay: { root: el('overlay') },
       });
       session.addEventListener('end', onSessionEnd);
       renderer.xr.setReferenceSpaceType('local');
       await renderer.xr.setSession(session);
-      const viewerSpace = await session.requestReferenceSpace('viewer');
-      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+      await requestGroundDetection();
       renderer.setAnimationLoop(onFrame);
     } catch (error) {
       if (session) await session.end(); else onSessionEnd();
@@ -195,20 +268,36 @@
 
   function turn(angle) { holder.rotation.y += angle; }
 
-  // Buttons sit inside the overlay, so a drag is counted only when it starts on the empty area.
-  let dragX = null;
-  el('overlay').addEventListener('pointerdown', (e) => { dragX = e.target.closest('button') ? null : e.clientX; });
-  el('overlay').addEventListener('pointermove', (e) => {
-    if (dragX === null) return;
-    turn((e.clientX - dragX) * DRAG_RAD_PER_PX);
-    dragX = e.clientX;
+  function shiftHeight(delta) {
+    isHeightManual = true;
+    groundY += delta;
+    if (!holder.visible) return;
+    holder.position.y = groundY;
+    anchorNeedsUpdate = true;
+  }
+
+  // A short touch on the empty area places the model, a sideways drag turns it. Buttons handle themselves.
+  let touch = null;
+  el('overlay').addEventListener('pointerdown', (e) => {
+    touch = isLocked || e.target.closest('button') ? null : { startX: e.clientX, lastX: e.clientX, isDrag: false };
   });
-  for (const type of ['pointerup', 'pointercancel']) el('overlay').addEventListener(type, () => { dragX = null; });
+  el('overlay').addEventListener('pointermove', (e) => {
+    if (!touch) return;
+    if (Math.abs(e.clientX - touch.startX) > TAP_SLOP_PX) touch.isDrag = true;
+    if (touch.isDrag) turn((e.clientX - touch.lastX) * DRAG_RAD_PER_PX);
+    touch.lastX = e.clientX;
+  });
+  el('overlay').addEventListener('pointerup', (e) => {
+    if (touch && !touch.isDrag) pendingTap = { x: e.clientX, y: e.clientY };
+    touch = null;
+  });
+  el('overlay').addEventListener('pointercancel', () => { touch = null; });
 
   el('turn-left').addEventListener('click', () => turn(FINE_TURN_RAD));
   el('turn-right').addEventListener('click', () => turn(-FINE_TURN_RAD));
-  el('place').addEventListener('click', () => { placeRequested = true; });
-  el('replace').addEventListener('click', () => { releaseAnchor(); setPlaced(false); });
+  el('lower').addEventListener('click', () => shiftHeight(-HEIGHT_STEP_M));
+  el('higher').addEventListener('click', () => shiftHeight(HEIGHT_STEP_M));
+  el('lock').addEventListener('click', () => { if (holder.visible) setLocked(!isLocked); });
   el('exit').addEventListener('click', () => session && session.end());
   el('start').addEventListener('click', startSession);
 
